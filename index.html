@@ -473,25 +473,6 @@ body.dark #analysisModal > div {
     <!-- Attack Visualizer Modal -->
     <div id="attackModal"><div class="prev-content"><div id="attackGraph"></div><button id="closeModal" class="btn">Close Visualizer</button></div></div>
 
-    <!-- Settings Modal -->
-    <div id="settings">
-      <div class="settings-content" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-        <h2 id="settingsTitle">Settings</h2>
-        <label>Google Gemini API Key (Optional)<br><input id="googleApiKey" type="password" placeholder="Generative Language API key"></label>
-        <label>CrowdSec CTI API Key (Optional)<br><input id="crowdsecKey" type="password" placeholder="Your CrowdSec CTI API key"></label>
-        <label>GitHub Token (Optional)<br><input id="githubToken" type="password" placeholder="GitHub Personal Access Token"></label>
-        <label>Optional AI Endpoint (enterprise)<br><input id="aiEndpointInput" type="text" placeholder="https://your-host/api/analyze"></label>
-        <p class="meta">Keys are stored only in your browser (localStorage).</p>
-        <div style="display:flex;gap:12px;margin-top:20px;flex-wrap:wrap;">
-          <button id="saveSettings" class="btn">Save</button>
-          <button id="closeSettings" class="btn">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Prevalence Modal -->
-    <div id="prevalenceModal"><div class="prev-content"><div class="prev-header"><h3 id="prevTitle">Prevalence</h3><button class="btn" onclick="document.getElementById('prevalenceModal').style.display='none'">Close</button></div><div id="prevBody"></div></div></div>
-
     <!-- AI Analysis Results Modal -->
     <div id="analysisModal" role="dialog" aria-modal="true" aria-labelledby="analysisTitle" style="display:none; position:fixed; inset:0; background: rgba(0,0,0,0.6); z-index:1450; align-items:center; justify-content:center;">
       <div style="background: var(--panel-light); color: inherit; border:1px solid var(--border-light); border-radius:12px; width:92%; max-width:860px; max-height:85vh; overflow:auto; padding:18px;">
@@ -1482,5 +1463,6 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
