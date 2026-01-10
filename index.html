@@ -549,36 +549,6 @@ function initTheme() {
   document.getElementById("theme")?.addEventListener("click", toggleMode);
 }
 
-/* ---------- Settings ---------- */
-function initSettings() {
-  const settings = document.getElementById("settings");
-  const openBtn = document.getElementById("settingsBtn");
-  const saveBtn = document.getElementById("saveSettings");
-  const closeBtn = document.getElementById("closeSettings");
-  const cCrowd = document.getElementById("crowdsecKey");
-  const cGitHub = document.getElementById("githubToken");
-  const googleKey = document.getElementById("googleApiKey");
-  const aiEndpointInput = document.getElementById("aiEndpointInput");
-
-  openBtn.addEventListener("click", () => {
-    cCrowd.value = localStorage.getItem("crowdsecKey") || "";
-    cGitHub.value = localStorage.getItem("githubToken") || "";
-    googleKey.value = localStorage.getItem("googleApiKey") || "";
-    aiEndpointInput.value = localStorage.getItem("aiEndpoint") || (ANALYZE_ENDPOINT || "");
-    settings.style.display = "flex";
-  });
-  saveBtn.addEventListener("click", () => {
-    localStorage.setItem("crowdsecKey", cCrowd.value.trim());
-    localStorage.setItem("githubToken", cGitHub.value.trim());
-    localStorage.setItem("googleApiKey", googleKey.value.trim());
-    localStorage.setItem("aiEndpoint", aiEndpointInput.value.trim());
-    toast("Settings saved");
-    settings.style.display = "none";
-  });
-  closeBtn.addEventListener("click", () => { settings.style.display = "none"; });
-  settings.addEventListener("click", (e) => { if (e.target.id === "settings") settings.style.display = "none"; });
-}
-
 /* ---------- CWE Builder ---------- */
 function buildCweHtml(cveJson, nvdJson) {
   const rows = [];
@@ -731,19 +701,6 @@ async function runLocalAnalysis(prompt) {
   else { body.textContent = await __aiSession.prompt(prompt); }
   status.textContent = 'Complete';
 }
-const GOOGLE_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
-async function runGeminiAnalysis(prompt) {
-  const body = document.getElementById('analysisBody'); const status = document.getElementById('analysisStatus');
-  const key = (localStorage.getItem('googleApiKey') || '').trim(); if (!key) throw new Error('Google API key not configured');
-  status.textContent = 'Generating in cloud (Google Gemini)…';
-  const resp = await fetch(`${GOOGLE_API_URL}?key=${encodeURIComponent(key)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }]}], generationConfig: { temperature: 0.2 } }) });
-  if (!resp.ok) throw new Error(`Gemini call failed (${resp.status})`);
-  const json = await resp.json();
-  const text = json?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || json?.candidates?.[0]?.output_text || '';
-  if (!text) throw new Error('Gemini returned no text');
-  body.textContent = text;
-  status.textContent = 'Complete';
-}
 async function runCloudAnalysis(prompt) {
   const body = document.getElementById('analysisBody'); const status = document.getElementById('analysisStatus');
   status.textContent = 'Generating in cloud (enterprise endpoint)…';
@@ -768,7 +725,6 @@ async function runAiAnalysis() {
       try { await runGeminiAnalysis(prompt); return; }
       catch { body.textContent = generateStaticAnalysis(ctx); status.textContent = 'Static analysis (no AI)'; return; }
     }
-    const keyPresent = !!(localStorage.getItem('googleApiKey') || '').trim();
     if (keyPresent) { try { await runGeminiAnalysis(prompt); return; } catch (gemErr) { console.warn('Gemini failed:', gemErr); } }
 
     const endpoint = localStorage.getItem('aiEndpoint') || ANALYZE_ENDPOINT;
@@ -1453,7 +1409,6 @@ function bindSearchHandlers() {
 
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {
-  initTheme(); initSettings();
   loadVulnCheck(); loadExploitationWatch(); displayFeeds();
   initInlineAnalysis(); bindSearchHandlers();
   document.getElementById("go").addEventListener("click", handleSearch);
@@ -1463,6 +1418,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
