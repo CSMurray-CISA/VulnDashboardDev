@@ -912,6 +912,9 @@ let vendorSearchState = {
   allVulns: []  // accumulate all loaded CVEs
 };
 
+// Add near vendorSearchState declaration
+let previousVendorSearch = null;  // { keyword, allVulns, currentStartIndex, totalResults }  
+  
 /* ---------- NVD API Helpers ---------- */
 async function fetchFromNVD(endpoint, params = {}) {
   const query = new URLSearchParams({
@@ -1026,23 +1029,26 @@ function renderVendorProductResults(data, searchTerm = '', isAppend = false) {
 
   // Render the now-sorted items
   vendorSearchState.allVulns.forEach(vuln => {
-    const cve = vuln?.cve || {};
-    const id = cve.id || 'Unknown';
-    const desc = cve.descriptions?.[0]?.value || 'No description';
-    const published = cve.published ? new Date(cve.published).toLocaleDateString() : '—';
-    const score = cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore ||
-                  cve.metrics?.cvssMetricV40?.[0]?.cvssData?.baseScore || 0;
+  const cve = vuln?.cve || {};
+  const id = cve.id || 'Unknown';
+  const desc = cve.descriptions?.[0]?.value || 'No description';
+  const published = cve.published ? new Date(cve.published).toLocaleDateString() : '—';
+  const score = cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore ||
+                cve.metrics?.cvssMetricV40?.[0]?.cvssData?.baseScore || 0;
 
-    html += `
-      <div class="item">
-        <div class="title">
-          ${id} ${getSeverityChip(score)} ${getKevBadges(id) || ''}
-        </div>
-        <div class="meta">
-          Published: ${published}<br>
-          ${desc.substring(0, 180)}${desc.length > 180 ? '...' : ''}
-        </div>
-      </div>`;
+  html += `
+    <div class="item">
+      <div class="title">
+        <a href="#" class="cve-link" data-cve="${id}" style="color: var(--link-light); font-weight: 600;">
+          ${id}
+        </a>
+        ${getSeverityChip(score)} ${getKevBadges(id) || ''}
+      </div>
+      <div class="meta">
+        Published: ${published}<br>
+        ${desc.substring(0, 180)}${desc.length > 180 ? '...' : ''}
+      </div>
+    </div>`;
   });
 
   const content = document.getElementById('cveContent');
@@ -1789,15 +1795,10 @@ function clearCveFields() {
   }
 }
 
-// --- Bind the Clear button on DOM ready (or add to your existing bindings) ---
-document.addEventListener('DOMContentLoaded', () => {
-  const clearBtn = document.getElementById('clearCve');
-  if (clearBtn) {
-    clearBtn.addEventListener('click', clearCveFields);
-  }
-});
- 
-/* ---------- Init ---------- */
+// Global variable (already declared earlier)
+let previousVendorSearch = null;
+
+// One DOMContentLoaded listener with everything
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
   loadVulnCheck();
@@ -1806,8 +1807,9 @@ document.addEventListener("DOMContentLoaded", () => {
   initInlineAnalysis();
   bindSearchHandlers();
   loadKEV().catch(err => console.warn("Initial KEV load failed:", err));
+  refreshKev().catch(err => console.warn("KEV refresh failed on load:", err));
 
-  // Attach search handlers
+  // Search handlers
   document.getElementById("go")?.addEventListener("click", handleSearch);
   document.getElementById("cve")?.addEventListener("keydown", e => {
     if (e.key === "Enter") {
@@ -1820,38 +1822,81 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("attackModal").style.display = "none";
   });
 
-  // Force fresh KEV load once DOM is ready (no nesting needed)
-  refreshKev().catch(err => console.warn("KEV refresh failed on load:", err));
+  // Clear button
+  document.getElementById('clearCve')?.addEventListener('click', clearCveFields);
+
+  // CVE link click → load single CVE view
+  document.addEventListener('click', function(e) {
+    if (e.target.classList.contains('cve-link')) {
+      e.preventDefault();
+      const cveId = e.target.getAttribute('data-cve');
+      if (!cveId || !isCVE(cveId)) return;
+
+      previousVendorSearch = { ...vendorSearchState };
+
+      const inputEl = document.getElementById('cve');
+      if (inputEl) inputEl.value = cveId;
+
+      const loadingEl = document.getElementById('loading');
+      if (loadingEl) loadingEl.style.display = 'flex';
+
+      // Hide back button during new load (prevents stale buttons)
+      const backBtn = document.getElementById('backToList');
+      if (backBtn) backBtn.style.display = 'none';
+
+      runSearch()  // ← no await needed unless you make runSearch return Promise
+        .then(() => {
+          let backBtn = document.getElementById('backToList');
+          if (!backBtn) {
+            const header = document.querySelector('header.cve-header');
+            if (!header) return;
+            backBtn = document.createElement('button');
+            backBtn.id = 'backToList';
+            backBtn.className = 'btn';
+            backBtn.textContent = '← Back to List';
+            backBtn.style.marginLeft = '12px';
+            header.appendChild(backBtn);
+          }
+          backBtn.style.display = 'inline-block';
+        })
+        .catch(err => {
+          console.error(err);
+          toast('Failed to load CVE details');
+        })
+        .finally(() => {
+          if (loadingEl) loadingEl.style.display = 'none';
+        });
+    }
+  });
+
+  // Back button click → restore list
+  document.addEventListener('click', function(e) {
+    if (e.target.id === 'backToList' && previousVendorSearch) {
+      e.preventDefault();
+
+      vendorSearchState = { ...previousVendorSearch };
+
+      const inputEl = document.getElementById('cve');
+      if (inputEl) inputEl.value = previousVendorSearch.keyword || '';
+
+      renderVendorProductResults(
+        {
+          vulnerabilities: previousVendorSearch.allVulns,
+          totalResults: previousVendorSearch.totalResults,
+          // You can omit startIndex if render function doesn't strictly need it
+          // startIndex: previousVendorSearch.currentStartIndex - previousVendorSearch.allVulns.length
+        },
+        previousVendorSearch.keyword,
+        false
+      );
+
+      const backBtn = document.getElementById('backToList');
+      if (backBtn) backBtn.style.display = 'none';
+
+      document.getElementById('cveContent')?.scrollIntoView({ behavior: 'smooth' });
+    }
+  });
 });
 
 </script>
 </html>
-  
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
