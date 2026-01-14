@@ -1145,7 +1145,8 @@ if (data.totalResults <= 50 && data.totalResults > 0) {
   
   toast(`Only ${data.totalResults} results — web link added for more`);
 }
-  /* ---------- CVE flow ---------- */
+}
+/* ---------- CVE flow ---------- */
 /* [unchanged: isCVE, runSearch] */
 function isCVE(str){ return /^CVE-\d{4}-\d{4,}$/i.test(str); }
 async function runSearch() {
@@ -1774,6 +1775,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
