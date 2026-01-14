@@ -864,35 +864,55 @@ function classFromScore(score) { return score < 4 ? 'low' : score < 7 ? 'medium'
 function tokensFromQuery(query) { return query.toLowerCase().split(/\s+/).filter(t => t.length > 1); }
 function cpeTokensMatch(cpe, tokens) { if (!cpe) return false; const parts = cpe.toLowerCase().split(':'); return tokens.every(t => parts.some(p => p.includes(t))); }
 function vulnMatchesTokens(vuln, tokens) { const desc = vuln?.cve?.descriptions?.[0]?.value?.toLowerCase() || ''; const refs = vuln?.cve?.references?.flatMap(r => r.url.toLowerCase() || []) || []; return tokens.every(t => desc.includes(t) || refs.some(u => u.includes(t))); }
-async function fetchNvdCvesByKeyword(keyword) {
+
+// Global state for pagination (vendor/product mode only)
+let vendorSearchState = {
+  keyword: '',
+  currentStartIndex: 0,
+  totalResults: 0,
+  resultsPerPage: 50,
+  allVulns: []  // accumulate all loaded CVEs
+};
+
+async function fetchNvdCvesByKeyword(keyword, startIndex = 0) {
   try {
-    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=50&sortField=published&sortOrder=desc`;
-    console.log("Fetching NVD:", url);
+    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=50&startIndex=${startIndex}&sortField=published&sortOrder=desc`;
+    console.log("Fetching NVD page:", url);
     const res = await fetch(url);
     if (!res.ok) throw new Error(`NVD HTTP ${res.status}`);
     const json = await res.json();
     
-    // Extract what we need
     return {
       vulnerabilities: json.vulnerabilities || [],
-      totalResults: json.totalResults || 0,     // ← this is the key field
-      resultsPerPage: json.resultsPerPage || 0,
-      startIndex: json.startIndex || 0
+      totalResults: json.totalResults || 0,
+      resultsPerPage: json.resultsPerPage || 50,
+      startIndex: json.startIndex || startIndex
     };
   } catch (err) {
     console.error("NVD fetch failed:", err);
     return { vulnerabilities: [], totalResults: 0 };
   }
 }
-function renderVendorProductResults(data, searchTerm = '') {
+
+function renderVendorProductResults(data, searchTerm = '', isAppend = false) {
   const vulns = data.vulnerabilities || [];
-  const total = data.totalResults || 0;
+  const total = data.totalResults || vendorSearchState.totalResults;
   let html = '';
 
-  // Show total count at the top
+  // Update global state
+  vendorSearchState.keyword = searchTerm;
+  vendorSearchState.totalResults = total;
+  vendorSearchState.currentStartIndex = data.startIndex + vulns.length;
+
+  if (!isAppend) {
+    vendorSearchState.allVulns = []; // reset on new search
+  }
+  vendorSearchState.allVulns.push(...vulns);
+
+  // Header with total & progress
   if (total > 0) {
-    const shown = vulns.length;
-    const moreText = total > shown ? ` (showing first ${shown} of ${total.toLocaleString()})` : '';
+    const shown = vendorSearchState.allVulns.length;
+    const moreText = shown < total ? ` (showing first ${shown} of ${total.toLocaleString()})` : '';
     html += `
       <div class="item" style="background:rgba(13,110,253,0.08); padding:12px; border-radius:8px; margin-bottom:16px;">
         <div class="title" style="font-size:1.1em;">
@@ -902,20 +922,21 @@ function renderVendorProductResults(data, searchTerm = '') {
       </div>`;
   }
 
-  if (total === 0 || vulns.length === 0) {
+  if (total === 0 || vendorSearchState.allVulns.length === 0) {
     html += '<div class="meta">No matching vulnerabilities found for "' + (searchTerm || 'your query') + '".</div>';
   } else {
-    // Optional client-side sort (extra safety)
-    vulns.sort((a, b) => {
+    // Sort all accumulated vulns by CVE ID descending (safety)
+    vendorSearchState.allVulns.sort((a, b) => {
       const idA = a.cve?.id || '';
       const idB = b.cve?.id || '';
-      return idB.localeCompare(idA);  // descending CVE ID
+      return idB.localeCompare(idA);
     });
 
-    vulns.forEach(vuln => {
+    // Render current batch (or all if appending)
+    const toRender = isAppend ? vulns : vendorSearchState.allVulns;
+    toRender.forEach(vuln => {
       const cve = vuln?.cve;
       if (!cve) return;
-
       const id = cve.id || 'Unknown';
       const desc = cve.descriptions?.[0]?.value || 'No description';
       const published = cve.published ? new Date(cve.published).toLocaleDateString() : '—';
@@ -937,32 +958,81 @@ function renderVendorProductResults(data, searchTerm = '') {
         </div>`;
     });
   }
+
+  // Append or replace content
   const content = document.getElementById('cveContent');
-  content.innerHTML = html || '<div class="meta">No results to display.</div>';
+  if (isAppend) {
+    content.innerHTML += html;
+  } else {
+    content.innerHTML = html;
+  }
+
+  // Add/Show "Load more" button if more pages exist
+  const hasMore = vendorSearchState.allVulns.length < total;
+  let loadMoreBtn = document.getElementById('loadMoreBtn');
+  if (!loadMoreBtn && hasMore) {
+    loadMoreBtn = document.createElement('button');
+    loadMoreBtn.id = 'loadMoreBtn';
+    loadMoreBtn.className = 'btn';
+    loadMoreBtn.textContent = 'Load more (50 more CVEs)';
+    loadMoreBtn.style.marginTop = '16px';
+    loadMoreBtn.style.display = 'block';
+    loadMoreBtn.onclick = () => loadNextPage();
+    content.appendChild(loadMoreBtn);
+  } else if (loadMoreBtn) {
+    loadMoreBtn.style.display = hasMore ? 'block' : 'none';
+    if (!hasMore) loadMoreBtn.textContent = 'All CVEs loaded';
+  }
 
   renderRelevantSearches(searchTerm);
 }
-  const content = document.getElementById('cveContent');
-  content.innerHTML = html || '<div class="meta">No results to display.</div>';
 
-  renderRelevantSearches(searchTerm);
+async function loadNextPage() {
+  const { keyword, currentStartIndex } = vendorSearchState;
+  if (!keyword) return;
+
+  const loadingEl = document.getElementById("loading");
+  if (loadingEl) loadingEl.style.display = "flex";
+
+  try {
+    // Show delay message if using rate-limit delay
+    // toast("Waiting 6 seconds for NVD rate limit...");  // optional
+
+    // Uncomment if no API key
+    // await new Promise(resolve => setTimeout(resolve, 6000));
+
+    const data = await fetchNvdCvesByKeyword(keyword, currentStartIndex);
+    renderVendorProductResults(data, keyword, true);
+  } catch (err) {
+    console.error("Pagination fetch error:", err);
+    toast("Failed to load more results");
+  } finally {
+    if (loadingEl) loadingEl.style.display = "none";
+  }
 }
+
 async function runVendorProductSearch(keyword) {
   if (!keyword || typeof keyword !== 'string' || keyword.trim() === '') {
     toast("Invalid search term for vendor/product");
     return;
   }
   console.log("Vendor/Product search started for:", keyword);
-  
+
+  vendorSearchState = {  // reset state for new search
+    keyword: keyword,
+    currentStartIndex: 0,
+    totalResults: 0,
+    resultsPerPage: 50,
+    allVulns: []
+  };
+
   const loadingEl = document.getElementById("loading");
   if (loadingEl) loadingEl.style.display = "flex";
-  
+
   try {
-    const data = await fetchNvdCvesByKeyword(keyword);
+    const data = await fetchNvdCvesByKeyword(keyword, 0);
     console.log("NVD response:", data);
-    
-    // Pass the whole data object now
-    renderVendorProductResults(data, keyword);
+    renderVendorProductResults(data, keyword, false); // new search, not append
   } catch (err) {
     console.error("Vendor search error:", err);
     document.getElementById("cveContent").innerHTML = `<div class="meta">Error loading vendor/product results: ${err.message}</div>`;
@@ -1600,6 +1670,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
