@@ -1012,7 +1012,11 @@ function renderVendorProductResults(data, searchTerm = '', isAppend = false) {
   });
 
   const content = document.getElementById('cveContent');
-  content[isAppend ? 'innerHTML' : 'innerHTML'] += html;  // typo fix: use += for append
+  if (isAppend) {
+  content.innerHTML += html;
+} else {
+  content.innerHTML = html;
+}
 
   // Load more button logic (unchanged, but now cleaner)
   const hasMore = vendorSearchState.allVulns.length < total;
@@ -1109,44 +1113,40 @@ async function runVendorProductSearch(keyword) {
     } 
     // 2+ words → use API directly with user's exact input
     else {
-// Use API with user's exact input
-const data = await fetchNvdCvesByKeyword(trimmedKeyword, 0);
-console.log("CVE response:", {
-  total: data.totalResults,
-  returned: data.vulnerabilities?.length || 0,
-  first: data.vulnerabilities?.[0]?.cve?.id || "none"
-});
-
-// Always render the API results first
-renderVendorProductResults(data, trimmedKeyword, false);
-
-// If low results, ADD advisory banner ABOVE the results (don't replace)
-if (data.totalResults <= 50 && data.totalResults > 0) {
-  const webQuery = encodeURIComponent(trimmedKeyword);
-  const nvdWebUrl = `https://nvd.nist.gov/vuln/search/results?form_type=Basic&results_type=overview&query=${webQuery}&search_type=all`;
-
-  const advisoryHtml = `
-    <div class="item" style="background:rgba(255,193,7,0.1); padding:16px; border-radius:8px; margin-bottom:16px; order:-1;">
-      <div class="title" style="font-size:1.2em; color:#e65100;">Limited API Results (${data.totalResults})</div>
-      <div class="meta" style="margin-top:12px;">
-        The NVD API only found ${data.totalResults} matches for "${trimmedKeyword}".<br>
-        Broad or common terms sometimes return few results in the API.<br><br>
-        <a href="${nvdWebUrl}" target="_blank" style="color:#0d6efd; font-weight:bold;">
-          View full NVD web search results here
-        </a><br>
-        (often shows many more entries)
-      </div>
-    </div>
-  `;
-
-  // Insert advisory at the TOP of cveContent
-  const content = document.getElementById("cveContent");
-  content.innerHTML = advisoryHtml + content.innerHTML;
-  
-  toast(`Only ${data.totalResults} results — web link added for more`);
-}
-}
-/* ---------- CVE flow ---------- */
+      const data = await fetchNvdCvesByKeyword(trimmedKeyword, 0);
+      console.log("CVE response:", {
+        total: data.totalResults,
+        returned: data.vulnerabilities?.length || 0,
+        first: data.vulnerabilities?.[0]?.cve?.id || "none"
+      });
+      // Always render the API results first
+      renderVendorProductResults(data, trimmedKeyword, false);
+      // If low results, ADD advisory banner ABOVE the results (don't replace)
+      if (data.totalResults <= 50 && data.totalResults > 0) {
+        const webQuery = encodeURIComponent(trimmedKeyword);
+        const nvdWebUrl = `https://nvd.nist.gov/vuln/search/results?form_type=Basic&results_type=overview&query=${webQuery}&search_type=all`;
+        const advisoryHtml = `
+          <div class="item" style="background:rgba(255,193,7,0.1); padding:16px; border-radius:8px; margin-bottom:16px; order:-1;">
+            <div class="title" style="font-size:1.2em; color:#e65100;">Limited API Results (${data.totalResults})</div>
+            <div class="meta" style="margin-top:12px;">
+              The NVD API only found ${data.totalResults} matches for "${trimmedKeyword}".<br>
+              Broad or common terms sometimes return few results in the API.<br><br>
+              <a href="${nvdWebUrl}" target="_blank" style="color:#0d6efd; font-weight:bold;">
+                View full NVD web search results here
+              </a><br>
+              (often shows many more entries)
+            </div>
+          </div>
+        `;
+        // Insert advisory at the TOP of cveContent
+        const content = document.getElementById("cveContent");
+        content.innerHTML = advisoryHtml + content.innerHTML;
+       
+        toast(`Only ${data.totalResults} results — web link added for more`);
+      }
+      renderRelevantSearches(trimmedKeyword);  // This should be here — outside the if
+    }
+    /* ---------- CVE flow ---------- */
 /* [unchanged: isCVE, runSearch] */
 function isCVE(str){ return /^CVE-\d{4}-\d{4,}$/i.test(str); }
 async function runSearch() {
@@ -1775,6 +1775,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
