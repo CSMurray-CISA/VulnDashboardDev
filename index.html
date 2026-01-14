@@ -1121,7 +1121,7 @@ async function runVendorProductSearch(keyword) {
   if (loadingEl) loadingEl.style.display = "flex";
   try {
     // Single-word = broad → show warning + web link only
-    if (wordCount === 0) {
+    if (wordCount === 1) {
       const webQuery = encodeURIComponent(trimmedKeyword);
       const nvdWebUrl = `https://nvd.nist.gov/vuln/search/results?form_type=Basic&results_type=overview&query=${webQuery}&search_type=all`;
       const fallbackHtml = `
@@ -1895,5 +1895,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 </script>
 </html>
+
 
 
