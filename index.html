@@ -876,7 +876,7 @@ let vendorSearchState = {
 
 async function fetchNvdCvesByKeyword(keyword, startIndex = 0) {
   try {
-    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=50&startIndex=${startIndex}&sortField=published`;
+    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=50&startIndex=${startIndex}`;
     console.log("Fetching NVD page:", url);
     const res = await fetch(url);
     if (!res.ok) throw new Error(`NVD HTTP ${res.status}`);
@@ -1747,6 +1747,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
