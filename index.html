@@ -1011,13 +1011,12 @@ function renderVendorProductResults(data, searchTerm = '', isAppend = false) {
       </div>`;
   });
 
-  const content = document.getElementById('cveContent');
-  if (isAppend) {
+const content = document.getElementById('cveContent');
+if (isAppend) {
   content.innerHTML += html;
 } else {
   content.innerHTML = html;
 }
-
   // Load more button logic (unchanged, but now cleaner)
   const hasMore = vendorSearchState.allVulns.length < total;
   let btn = document.getElementById('loadMoreBtn');
@@ -1066,13 +1065,10 @@ async function runVendorProductSearch(keyword) {
     toast("Invalid search term for vendor/product");
     return;
   }
-
   const trimmedKeyword = keyword.trim();
   console.log("Vendor/Product search started for:", trimmedKeyword);
-
   const words = trimmedKeyword.split(/\s+/).filter(w => w.length > 0);
   const wordCount = words.length;
-
   vendorSearchState = {
     keyword: trimmedKeyword,
     currentStartIndex: 0,
@@ -1080,16 +1076,13 @@ async function runVendorProductSearch(keyword) {
     resultsPerPage: 50,
     allVulns: []
   };
-
   const loadingEl = document.getElementById("loading");
   if (loadingEl) loadingEl.style.display = "flex";
-
   try {
     // Single-word = broad → show warning + web link only
     if (wordCount === 1) {
       const webQuery = encodeURIComponent(trimmedKeyword);
       const nvdWebUrl = `https://nvd.nist.gov/vuln/search/results?form_type=Basic&results_type=overview&query=${webQuery}&search_type=all`;
-
       const fallbackHtml = `
         <div class="item" style="background:rgba(255,193,7,0.1); padding:16px; border-radius:8px;">
           <div class="title" style="font-size:1.2em; color:#e65100;">Broad search detected</div>
@@ -1105,28 +1098,26 @@ async function runVendorProductSearch(keyword) {
           Tip: Try adding a product/version (e.g., "${trimmedKeyword} Server", "${trimmedKeyword} 7")
         </div>
       `;
-
       document.getElementById("cveContent").innerHTML = fallbackHtml;
       renderRelevantSearches(trimmedKeyword);
       toast("Single-word search — showing NVD web link instead");
       console.log("Broad single-word fallback:", nvdWebUrl);
-    } 
-    // 2+ words → use API directly with user's exact input
-    else {
+    } else {
+      // 2+ words → use API
       const data = await fetchNvdCvesByKeyword(trimmedKeyword, 0);
       console.log("CVE response:", {
         total: data.totalResults,
         returned: data.vulnerabilities?.length || 0,
         first: data.vulnerabilities?.[0]?.cve?.id || "none"
       });
-      // Always render the API results first
+      // Always render results
       renderVendorProductResults(data, trimmedKeyword, false);
-      // If low results, ADD advisory banner ABOVE the results (don't replace)
+      // Add advisory if low count
       if (data.totalResults <= 50 && data.totalResults > 0) {
         const webQuery = encodeURIComponent(trimmedKeyword);
         const nvdWebUrl = `https://nvd.nist.gov/vuln/search/results?form_type=Basic&results_type=overview&query=${webQuery}&search_type=all`;
         const advisoryHtml = `
-          <div class="item" style="background:rgba(255,193,7,0.1); padding:16px; border-radius:8px; margin-bottom:16px; order:-1;">
+          <div class="item" style="background:rgba(255,193,7,0.1); padding:16px; border-radius:8px; margin-bottom:16px;">
             <div class="title" style="font-size:1.2em; color:#e65100;">Limited API Results (${data.totalResults})</div>
             <div class="meta" style="margin-top:12px;">
               The NVD API only found ${data.totalResults} matches for "${trimmedKeyword}".<br>
@@ -1138,15 +1129,23 @@ async function runVendorProductSearch(keyword) {
             </div>
           </div>
         `;
-        // Insert advisory at the TOP of cveContent
         const content = document.getElementById("cveContent");
-        content.innerHTML = advisoryHtml + content.innerHTML;
-       
+        content.insertAdjacentHTML('afterbegin', advisoryHtml);
         toast(`Only ${data.totalResults} results — web link added for more`);
       }
-      renderRelevantSearches(trimmedKeyword);  // This should be here — outside the if
+      renderRelevantSearches(trimmedKeyword);
     }
-    /* ---------- CVE flow ---------- */
+  } catch (err) {
+    console.error("Search failed:", err);
+    document.getElementById("cveContent").innerHTML = `
+      <div class="meta">Error: ${err.message || 'NVD service issue'}. Try a different term.</div>
+    `;
+    renderRelevantSearches(trimmedKeyword);
+  } finally {
+    if (loadingEl) loadingEl.style.display = "none";
+  }
+}
+/* ---------- CVE flow ---------- */
 /* [unchanged: isCVE, runSearch] */
 function isCVE(str){ return /^CVE-\d{4}-\d{4,}$/i.test(str); }
 async function runSearch() {
@@ -1775,6 +1774,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
