@@ -865,7 +865,16 @@ function tokensFromQuery(query) { return query.toLowerCase().split(/\s+/).filter
 function cpeTokensMatch(cpe, tokens) { if (!cpe) return false; const parts = cpe.toLowerCase().split(':'); return tokens.every(t => parts.some(p => p.includes(t))); }
 function vulnMatchesTokens(vuln, tokens) { const desc = vuln?.cve?.descriptions?.[0]?.value?.toLowerCase() || ''; const refs = vuln?.cve?.references?.flatMap(r => r.url.toLowerCase() || []) || []; return tokens.every(t => desc.includes(t) || refs.some(u => u.includes(t))); }
 async function fetchNvdCvesByKeyword(keyword) {
-  try { const res = await fetch(`https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=20`); return await res.json(); } catch { return { vulnerabilities: [] }; }
+  try {
+    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=20`;
+    console.log("Fetching NVD:", url);  // ← add this for debugging
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`NVD HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error("NVD fetch failed:", err);
+    return { vulnerabilities: [] };
+  }
 }
 function renderVendorProductResults(json) {
   const vulns = json.vulnerabilities || [];
@@ -884,14 +893,27 @@ function renderVendorProductResults(json) {
   renderRelevantSearches(keyword);
 }
 async function runVendorProductSearch(keyword) {
-  const loadingEl = document.getElementById("loading"); if (loadingEl) loadingEl.style.display = "flex";
+  if (!keyword || typeof keyword !== 'string' || keyword.trim() === '') {
+    toast("Invalid search term for vendor/product");
+    return;
+  }
+
+  console.log("Vendor/Product search started for:", keyword);  // ← debug
+
+  const loadingEl = document.getElementById("loading");
+  if (loadingEl) loadingEl.style.display = "flex";
+
   try {
     const json = await fetchNvdCvesByKeyword(keyword);
+    console.log("NVD response:", json);  // ← check if data arrives
     renderVendorProductResults(json);
   } catch (err) {
-    document.getElementById("cveContent").innerHTML = `<div class="meta">Error loading data: ${err.message}</div>`;
+    console.error("Vendor search error:", err);
+    document.getElementById("cveContent").innerHTML = `<div class="meta">Error loading vendor/product results: ${err.message}</div>`;
     renderRelevantSearches(keyword);
-  } finally { if (loadingEl) loadingEl.style.display = "none"; }
+  } finally {
+    if (loadingEl) loadingEl.style.display = "none";
+  }
 }
 /* ---------- CVE flow ---------- */
 /* [unchanged: isCVE, runSearch] */
@@ -1428,17 +1450,20 @@ function switchTab(tabIndex) {
 }
 /* ---------- Search bindings ---------- */
 function handleSearch() {
-  try {
-    const inputEl = document.getElementById('cve');
-    const v = (inputEl?.value || '').trim();
-    if (!v) { toast('Please enter a CVE or vendor/product'); return; }
-    isCVE(v) ? runSearch() : runVendorProductSearch(v);
-  } catch (e) {
-    console.error('handleSearch error:', e);
-    toast('Search failed — check console for details.');
+  const inputEl = document.getElementById('cve');
+  const v = (inputEl?.value || '').trim();
+  if (!v) {
+    toast('Please enter a CVE or vendor/product');
+    return;
+  }
+  const input = v.toUpperCase();
+  if (isCVE(input)) {
+    runSearch();
+  } else {
+    runVendorProductSearch(v);  // pass original case for keyword search
   }
 }
-function bindSearchHandlers() {
+  function bindSearchHandlers() {
   try {
     const btn = document.getElementById('go'); const input = document.getElementById('cve');
     if (btn) { btn.onclick = null; btn.addEventListener('click', handleSearch); }
@@ -1519,6 +1544,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
