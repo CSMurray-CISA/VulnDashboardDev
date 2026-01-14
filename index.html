@@ -876,29 +876,49 @@ async function fetchNvdCvesByKeyword(keyword) {
     return { vulnerabilities: [] };
   }
 }
-function renderVendorProductResults(json, searchTerm = '') {   // ← add searchTerm param
+function renderVendorProductResults(json, searchTerm = '') {
   const vulns = json.vulnerabilities || [];
   let html = '';
 
   if (vulns.length === 0) {
     html = '<div class="meta">No matching vulnerabilities found for "' + (searchTerm || 'your query') + '".</div>';
   } else {
+    // Optional: extra safety sort by CVE ID descending (in case API sort changes)
+    vulns.sort((a, b) => {
+      const idA = a.cve?.id || '';
+      const idB = b.cve?.id || '';
+      return idB.localeCompare(idA);  // descending
+    });
+
     vulns.forEach(vuln => {
       const cve = vuln?.cve;
       if (!cve) return;
+
       const id = cve.id || 'Unknown';
       const desc = cve.descriptions?.[0]?.value || 'No description';
-      const score = cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 0;
+      const published = cve.published ? new Date(cve.published).toLocaleDateString() : '—';
+      const score = cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore ||
+                    cve.metrics?.cvssMetricV40?.[0]?.cvssData?.baseScore || 0;
       const sev = severityFromScore(score);
       const cls = classFromScore(score);
-      html += `<div class="item"><div class="title">${id} <span class="chip ${cls}">${sev} (${score})</span></div><div class="meta">${desc}</div></div>`;
+
+      html += `
+        <div class="item">
+          <div class="title">
+            ${id}
+            <span class="chip ${cls}">${sev} (${score || 'N/A'})</span>
+          </div>
+          <div class="meta">
+            Published: ${published}<br>
+            ${desc.substring(0, 180)}${desc.length > 180 ? '...' : ''}
+          </div>
+        </div>`;
     });
   }
 
   const content = document.getElementById('cveContent');
   content.innerHTML = html || '<div class="meta">No results to display.</div>';
 
-  // Now safe: pass the actual term
   renderRelevantSearches(searchTerm);
 }
 async function runVendorProductSearch(keyword) {
@@ -1553,6 +1573,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
