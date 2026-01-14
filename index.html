@@ -866,28 +866,50 @@ function cpeTokensMatch(cpe, tokens) { if (!cpe) return false; const parts = cpe
 function vulnMatchesTokens(vuln, tokens) { const desc = vuln?.cve?.descriptions?.[0]?.value?.toLowerCase() || ''; const refs = vuln?.cve?.references?.flatMap(r => r.url.toLowerCase() || []) || []; return tokens.every(t => desc.includes(t) || refs.some(u => u.includes(t))); }
 async function fetchNvdCvesByKeyword(keyword) {
   try {
-    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=20`;
-    console.log("Fetching NVD:", url);  // ← add this for debugging
+    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=50&sortField=published&sortOrder=desc`;
+    console.log("Fetching NVD:", url);
     const res = await fetch(url);
     if (!res.ok) throw new Error(`NVD HTTP ${res.status}`);
-    return await res.json();
+    const json = await res.json();
+    
+    // Extract what we need
+    return {
+      vulnerabilities: json.vulnerabilities || [],
+      totalResults: json.totalResults || 0,     // ← this is the key field
+      resultsPerPage: json.resultsPerPage || 0,
+      startIndex: json.startIndex || 0
+    };
   } catch (err) {
     console.error("NVD fetch failed:", err);
-    return { vulnerabilities: [] };
+    return { vulnerabilities: [], totalResults: 0 };
   }
 }
-function renderVendorProductResults(json, searchTerm = '') {
-  const vulns = json.vulnerabilities || [];
+function renderVendorProductResults(data, searchTerm = '') {
+  const vulns = data.vulnerabilities || [];
+  const total = data.totalResults || 0;
   let html = '';
 
-  if (vulns.length === 0) {
-    html = '<div class="meta">No matching vulnerabilities found for "' + (searchTerm || 'your query') + '".</div>';
+  // Show total count at the top
+  if (total > 0) {
+    const shown = vulns.length;
+    const moreText = total > shown ? ` (showing first ${shown} of ${total.toLocaleString()})` : '';
+    html += `
+      <div class="item" style="background:rgba(13,110,253,0.08); padding:12px; border-radius:8px; margin-bottom:16px;">
+        <div class="title" style="font-size:1.1em;">
+          Found ${total.toLocaleString()} CVEs matching "${searchTerm || 'query'}"${moreText}
+        </div>
+        <div class="meta">Sorted by publish date (newest first)</div>
+      </div>`;
+  }
+
+  if (total === 0 || vulns.length === 0) {
+    html += '<div class="meta">No matching vulnerabilities found for "' + (searchTerm || 'your query') + '".</div>';
   } else {
-    // Optional: extra safety sort by CVE ID descending (in case API sort changes)
+    // Optional client-side sort (extra safety)
     vulns.sort((a, b) => {
       const idA = a.cve?.id || '';
       const idB = b.cve?.id || '';
-      return idB.localeCompare(idA);  // descending
+      return idB.localeCompare(idA);  // descending CVE ID
     });
 
     vulns.forEach(vuln => {
@@ -915,7 +937,11 @@ function renderVendorProductResults(json, searchTerm = '') {
         </div>`;
     });
   }
+  const content = document.getElementById('cveContent');
+  content.innerHTML = html || '<div class="meta">No results to display.</div>';
 
+  renderRelevantSearches(searchTerm);
+}
   const content = document.getElementById('cveContent');
   content.innerHTML = html || '<div class="meta">No results to display.</div>';
 
@@ -926,16 +952,17 @@ async function runVendorProductSearch(keyword) {
     toast("Invalid search term for vendor/product");
     return;
   }
-
-  console.log("Vendor/Product search started for:", keyword);  // ← debug
-
+  console.log("Vendor/Product search started for:", keyword);
+  
   const loadingEl = document.getElementById("loading");
   if (loadingEl) loadingEl.style.display = "flex";
-
+  
   try {
-    const json = await fetchNvdCvesByKeyword(keyword);
-    console.log("NVD response:", json);  // ← check if data arrives
-    renderVendorProductResults(json);
+    const data = await fetchNvdCvesByKeyword(keyword);
+    console.log("NVD response:", data);
+    
+    // Pass the whole data object now
+    renderVendorProductResults(data, keyword);
   } catch (err) {
     console.error("Vendor search error:", err);
     document.getElementById("cveContent").innerHTML = `<div class="meta">Error loading vendor/product results: ${err.message}</div>`;
@@ -1573,6 +1600,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
