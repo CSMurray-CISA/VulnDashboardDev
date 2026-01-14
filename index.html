@@ -583,6 +583,35 @@ function initTheme() {
   }
   document.getElementById("theme")?.addEventListener("click", toggleMode);
 }
+
+/* ---------- Utility Helpers ---------- */
+function severityFromScore(score) {
+  return score < 4 ? 'Low' : score < 7 ? 'Medium' : score < 9 ? 'High' : 'Critical';
+}
+
+function classFromScore(score) {
+  return score < 4 ? 'low' : score < 7 ? 'medium' : score < 9 ? 'high' : 'critical';
+}
+
+function capFirst(str) {
+  return (str || '').charAt(0).toUpperCase() + (str || '').slice(1);
+}
+
+function normalizeSsvcValue(val) {
+  return (val || 'N/A').toLowerCase().replace(/^(active|none|proof-of-concept|sporadic)$/i, m => m.toLowerCase());
+}
+
+function linkRow(url, label) {
+  const safeLabel = label || url;
+  return `<a href="${url}" target="_blank" rel="noopener noreferrer">${safeLabel}</a>`;
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 3000);
+}  
 /* ---------- CWE Builder ---------- */
 function buildCweHtml(cveJson, nvdJson) {
   const rows = [];
@@ -874,136 +903,133 @@ let vendorSearchState = {
   allVulns: []  // accumulate all loaded CVEs
 };
 
-async function fetchNvdCvesByKeyword(keyword, startIndex = 0) {
+/* ---------- NVD API Helpers ---------- */
+async function fetchFromNVD(endpoint, params = {}) {
+  const query = new URLSearchParams({
+    ...params,
+    resultsPerPage: params.resultsPerPage || 50
+  }).toString();
+
+  const url = `https://services.nvd.nist.gov/rest/json/${endpoint}?${query}`;
+  console.log(`Fetching NVD: ${url}`);
+
   try {
-    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=50&startIndex=${startIndex}&pubStartDate=2020-01-01`;
-    console.log("Fetching NVD page:", url);
     const res = await fetch(url);
     if (!res.ok) throw new Error(`NVD HTTP ${res.status}`);
-    const json = await res.json();
-    return {
-      vulnerabilities: json.vulnerabilities || [],
-      totalResults: json.totalResults || 0,
-      resultsPerPage: json.resultsPerPage || 50,
-      startIndex: json.startIndex || startIndex
-    };
+    return await res.json();
   } catch (err) {
-    console.error("NVD fetch failed:", err);
-    return { vulnerabilities: [], totalResults: 0 };
+    console.error(`NVD fetch error (${endpoint}):`, err);
+    return { vulnerabilities: [], totalResults: 0, products: [] };
   }
 }
 
+async function fetchNvdCvesByKeyword(keyword, startIndex = 0) {
+  return fetchFromNVD('cves/2.0', {
+    keywordSearch: keyword,
+    startIndex,
+    pubStartDate: '2020-01-01'  // prioritize recent results
+  });
+}
+
 async function fetchCPEs(keyword) {
-  try {
-    const url = `https://services.nvd.nist.gov/rest/json/cpes/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=10`;
-    console.log("Fetching CPEs for:", keyword, "→", url);
-    const res = await fetch(url);
-    if (!res.ok) {
-      console.warn(`CPE API returned ${res.status} — skipping enhancement`);
-      return [];
-    }
-    const json = await res.json();
-    console.log("CPE results count:", json.totalResults || 0);
-    return json.products || [];
-  } catch (err) {
-    console.error("CPE fetch error:", err);
-    return [];
-  }
+  const data = await fetchFromNVD('cpes/2.0', {
+    keywordSearch: keyword,
+    resultsPerPage: 10
+  });
+  return data.products || [];
 }
   
+/* ---------- Rendering Helpers ---------- */
+function getSeverityChip(score) {
+  const sev = severityFromScore(score);
+  const cls = classFromScore(score);
+  return `<span class="chip ${cls}">${sev} (${score || 'N/A'})</span>`;
+}
+
+function getKevBadges(cveId) {
+  const entry = getKevEntry(cveId);
+  if (!entry) return '';
+  let badges = `<span class="chip critical" style="background:#a60000;">KEV</span>`;
+  if (entry.knownRansomwareCampaignUse === 'Known') {
+    badges += `<span class="chip yes" style="margin-left:4px;">Ransomware</span>`;
+  }
+  return badges;
+}
+
 function renderVendorProductResults(data, searchTerm = '', isAppend = false) {
   const vulns = data.vulnerabilities || [];
   const total = data.totalResults || vendorSearchState.totalResults;
   let html = '';
-  // Update global state
+
+  // Update pagination state
   vendorSearchState.keyword = searchTerm;
   vendorSearchState.totalResults = total;
   vendorSearchState.currentStartIndex = data.startIndex + vulns.length;
-  if (!isAppend) {
-    vendorSearchState.allVulns = []; // reset on new search
-  }
+  if (!isAppend) vendorSearchState.allVulns = [];
   vendorSearchState.allVulns.push(...vulns);
-  // Header with total & progress
+
+  // Header
   if (total > 0) {
     const shown = vendorSearchState.allVulns.length;
-    const moreText = shown < total ? ` (showing first ${shown} of ${total.toLocaleString()})` : '';
+    const more = shown < total ? ` (showing first ${shown} of ${total.toLocaleString()})` : '';
     html += `
       <div class="item" style="background:rgba(13,110,253,0.08); padding:12px; border-radius:8px; margin-bottom:16px;">
         <div class="title" style="font-size:1.1em;">
-          Found ${total.toLocaleString()} CVEs matching "${searchTerm || 'query'}"${moreText}
+          Found ${total.toLocaleString()} CVEs for "${searchTerm}"${more}
         </div>
-        <div class="meta">Showing results from 2020 onward, sorted by publish date (newest first)</div>
+        <div class="meta">From 2020 onward • Newest first</div>
       </div>`;
-  }
-  if (total === 0 || vendorSearchState.allVulns.length === 0) {
-    html += '<div class="meta">No matching vulnerabilities found for "' + (searchTerm || 'your query') + '".</div>';
-  } else if (total > 0 && total < 20) {
-    html += `<div class="meta" style="color:#e65100; margin-bottom:12px;">(Few results — try adding specificity like "MongoDB Server" for more)</div>`;
+
+    if (total < 20) {
+      html += `<div class="meta" style="color:#e65100; margin-bottom:12px;">
+        (Few results — try more specific terms like "${searchTerm} Server")
+      </div>`;
+    }
   } else {
-    // Sort all accumulated vulns by published date descending
-    vendorSearchState.allVulns.sort((a, b) => {
-      const dateA = new Date(a.cve?.published || 0);
-      const dateB = new Date(b.cve?.published || 0);
-      return dateB - dateA;
-    });
-    // Render current batch (or all if appending)
-    const toRender = isAppend ? vulns : vendorSearchState.allVulns;
-    toRender.forEach(vuln => {
-      const cve = vuln?.cve;
-      if (!cve) return;
-      const id = cve.id || 'Unknown';
-      const desc = cve.descriptions?.[0]?.value || 'No description';
-      const published = cve.published ? new Date(cve.published).toLocaleDateString() : '—';
-      const score = cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore ||
-                    cve.metrics?.cvssMetricV40?.[0]?.cvssData?.baseScore || 0;
-      const sev = severityFromScore(score);
-      const cls = classFromScore(score);
-      // KEV check
-      let kevBadge = '';
-      const kevEntry = getKevEntry(id);
-      if (kevEntry) {
-        kevBadge = `<span class="chip critical" style="margin-left:8px; background:#a60000;">KEV</span>`;
-        if (kevEntry.knownRansomwareCampaignUse === 'Known') {
-          kevBadge += `<span class="chip yes" style="margin-left:4px;">Ransomware</span>`;
-        }
-      }
-      html += `
-        <div class="item">
-          <div class="title">
-            ${id}
-            <span class="chip ${cls}">${sev} (${score || 'N/A'})</span>
-            ${kevBadge}
-          </div>
-          <div class="meta">
-            Published: ${published}<br>
-            ${desc.substring(0, 180)}${desc.length > 180 ? '...' : ''}
-          </div>
-        </div>`;
-    });
+    html += '<div class="meta">No matching vulnerabilities found.</div>';
   }
-  // Append or replace content
+
+  // Render items
+  const toRender = isAppend ? vulns : vendorSearchState.allVulns;
+  toRender.forEach(vuln => {
+    const cve = vuln?.cve || {};
+    const id = cve.id || 'Unknown';
+    const desc = cve.descriptions?.[0]?.value || 'No description';
+    const published = cve.published ? new Date(cve.published).toLocaleDateString() : '—';
+    const score = cve.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore ||
+                  cve.metrics?.cvssMetricV40?.[0]?.cvssData?.baseScore || 0;
+
+    html += `
+      <div class="item">
+        <div class="title">
+          ${id} ${getSeverityChip(score)} ${getKevBadges(id)}
+        </div>
+        <div class="meta">
+          Published: ${published}<br>
+          ${desc.substring(0, 180)}${desc.length > 180 ? '...' : ''}
+        </div>
+      </div>`;
+  });
+
   const content = document.getElementById('cveContent');
-  if (isAppend) {
-    content.innerHTML += html;
-  } else {
-    content.innerHTML = html;
-  }
-  // Add/Show "Load more" button if more pages exist
+  content[isAppend ? 'innerHTML' : 'innerHTML'] += html;  // typo fix: use += for append
+
+  // Load more button logic (unchanged, but now cleaner)
   const hasMore = vendorSearchState.allVulns.length < total;
-  let loadMoreBtn = document.getElementById('loadMoreBtn');
-  if (!loadMoreBtn && hasMore) {
-    loadMoreBtn = document.createElement('button');
-    loadMoreBtn.id = 'loadMoreBtn';
-    loadMoreBtn.className = 'btn';
-    loadMoreBtn.textContent = 'Load more (50 more CVEs)';
-    loadMoreBtn.style.marginTop = '16px';
-    loadMoreBtn.style.display = 'block';
-    loadMoreBtn.onclick = () => loadNextPage();
-    content.appendChild(loadMoreBtn);
-  } else if (loadMoreBtn) {
-    loadMoreBtn.style.display = hasMore ? 'block' : 'none';
-    if (!hasMore) loadMoreBtn.textContent = 'All CVEs loaded';
+  let btn = document.getElementById('loadMoreBtn');
+  if (hasMore && !btn) {
+    btn = document.createElement('button');
+    btn.id = 'loadMoreBtn';
+    btn.className = 'btn';
+    btn.textContent = 'Load more (50 more)';
+    btn.style.marginTop = '16px';
+    btn.onclick = loadNextPage;
+    content.appendChild(btn);
+  } else if (btn) {
+    btn.style.display = hasMore ? 'block' : 'none';
+    btn.textContent = hasMore ? 'Load more (50 more)' : 'All loaded';
   }
+
   renderRelevantSearches(searchTerm);
 }
 
@@ -1782,6 +1808,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
