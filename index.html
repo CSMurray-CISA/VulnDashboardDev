@@ -1212,7 +1212,7 @@ async function runSearch() {
     ]);
     if (!cveRes.ok) throw new Error("CVE not found");
     // KEV / Ransomware tag
-    const kevEntry = await getKevEntry(input).catch(() => null);
+    const kevEntry = getKevEntry(input);
     const kevYes = !!kevEntry;
     const ransomwareTag = kevEntry ? (kevEntry.knownRansomwareCampaignUse || 'Unknown') : 'Unknown';
     // CNA record
@@ -1896,3 +1896,4 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 </script>
 </html>
+
