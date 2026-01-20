@@ -919,6 +919,12 @@ async function runSearch() {
     const kevEntry = await getKevEntry(input).catch(() => null);
     const kevYes = !!kevEntry;
     const ransomwareTag = kevEntry ? (kevEntry.knownRansomwareCampaignUse || 'Unknown') : 'Unknown';
+    // Pull the date the CVE was added to KEV (supports both CISA and cisagov JSON keys)
+    const kevDateAdded = kevEntry ? (kevEntry.dateAdded || kevEntry.date_added || '') : '';
+    const kevAddedPretty = kevDateAdded ? new Date(kevDateAdded).toLocaleDateString() : '';
+    const kevLabel = kevYes
+    ? `CISA KEV: Yes${kevAddedPretty ? ` — Added: ${kevAddedPretty}` : ''}`
+    : 'CISA KEV: No';
     // CNA record
     const cveData = await cveRes.json();
     const cna = cveData?.containers?.cna || {};
@@ -1060,8 +1066,10 @@ const quickLinksHtml = [
       <div class="item">
         <div class="title">Exploitation Signals</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-          <div class="badge ${kevYes ? 'yes' : 'no'}">CISA KEV: ${kevYes ? 'Yes' : 'No'}</div>
-          ${kevYes ? `<div class="badge ${String(ransomwareTag).toLowerCase()==='known' ? 'yes' : 'no'}">Ransomware: ${ransomwareTag}</div>` : `<div class="badge no">Ransomware: Unknown</div>`}
+        <div class="badge ${kevYes ? 'yes' : 'no'}">${kevLabel}</div>
+          ${kevYes
+          ? `<div class="badge ${String(ransomwareTag).toLowerCase()==='known' ? 'yes' : 'no'}">Ransomware: ${ransomwareTag}</div>`
+          : `<div class="badge no">Ransomware: Unknown</div>`}
           ${inVulncheck ? '<div class="badge yes">VulnCheck Recent</div>' : ''}
         </div>
         <div class="metrics-row">
@@ -1529,5 +1537,6 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
