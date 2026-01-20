@@ -1210,7 +1210,6 @@ async function displayFeeds() {
     }
   }
 }
-setInterval(displayFeeds, 10 * 60 * 1000);
 // Helper to test CVE format
 function isCVE(str){ return /^CVE-\d{4}-\d{4,}$/i.test(str); }
 // Main CVE search flow
@@ -1505,15 +1504,30 @@ document.addEventListener('DOMContentLoaded', () => {
 });
  
 /* ---------- Init ---------- */
+
 document.addEventListener("DOMContentLoaded", () => {
   initTheme();
-  loadVulnCheck(); loadExploitationWatch(); displayFeeds();
-  initInlineAnalysis(); bindSearchHandlers();
+  loadVulnCheck();
+  loadExploitationWatch();
+  displayFeeds();
+  initInlineAnalysis();
+  bindSearchHandlers();
+
   document.getElementById("go").addEventListener("click", handleSearch);
-  document.getElementById("cve").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); handleSearch(); } });
-  document.getElementById("closeModal")?.addEventListener("click", () => { document.getElementById("attackModal").style.display = "none"; });
+  document.getElementById("cve").addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); handleSearch(); }
+  });
+  document.getElementById("closeModal")?.addEventListener("click", () => {
+    document.getElementById("attackModal").style.display = "none";
+  });
+
+  // ✅ Auto-refresh intervals
+  setInterval(loadExploitationWatch, 15 * 60 * 1000); // every 15 minutes
+  setInterval(loadVulnCheck, 60 * 60 * 1000);         // every hour
+  setInterval(displayFeeds, 15 * 60 * 1000);
 });
 </script>
 </body>
 </html>
+
 
