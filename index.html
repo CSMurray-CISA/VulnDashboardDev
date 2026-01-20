@@ -897,6 +897,7 @@ function isCVE(str){ return /^CVE-\d{4}-\d{4,}$/i.test(str); }
 async function runSearch() {
   const inputRaw = (document.getElementById("cve")?.value || "").trim();
   const input = inputRaw.toUpperCase();
+
   // If not CVE, delegate to vendor/product search
   if (!isCVE(input)) {
     if (inputRaw.length < 2) {
@@ -905,9 +906,31 @@ async function runSearch() {
     }
     return runVendorProductSearch(inputRaw);
   }
+
   // Show loading overlay
   const loadingEl = document.getElementById("loading");
   if (loadingEl) loadingEl.style.display = "flex";
+
+  // --- helper: try KEV date from multiple sources (feed + localStorage map) ---
+  function getKevAddedDate(kevObj, cveIdUpper) {
+    // 1) direct from the object returned by loadKEV()
+    let d = '';
+    if (kevObj) {
+      d = kevObj.dateAdded || kevObj.date_added || '';
+      if (d) return d;
+    }
+    // 2) fallback to the watcher map persisted in localStorage
+    try {
+      const map = JSON.parse(localStorage.getItem('cveWatcher.kevMap') || '{}') || {};
+      const entry = map[cveIdUpper];
+      if (entry) {
+        return entry.dateAdded || entry.date_added || '';
+      }
+    } catch { /* ignore parse errors */ }
+    // 3) no date found
+    return '';
+  }
+
   try {
     // Fetch CNA (CVE Services), NVD, EPSS in parallel
     const [cveRes, nvdRes, epssRes] = await Promise.all([
@@ -916,17 +939,19 @@ async function runSearch() {
       fetch(`https://api.first.org/data/v1/epss?cve=${input}`)
     ]);
     if (!cveRes.ok) throw new Error("CVE not found");
-    // KEV / Ransomware tag
+
+    // KEV + ransomware tag
     const kevEntry = await getKevEntry(input).catch(() => null);
     const kevYes = !!kevEntry;
     const ransomwareTag = kevEntry ? (kevEntry.knownRansomwareCampaignUse || 'Unknown') : 'Unknown';
-    // ✅ KEV date-added (supports both feed key variants)
-    const kevDateAdded = kevEntry ? (kevEntry.dateAdded || kevEntry.date_added || '') : '';
-    const kevAddedPretty = kevDateAdded ? new Date(kevDateAdded).toLocaleDateString() : '';
-    // ✅ Compose final label: show date only when KEV is true and a date exists
+
+    // ✅ robust KEV date resolution
+    const kevDateRaw = getKevAddedDate(kevEntry, input);
+    const kevAddedPretty = kevDateRaw ? new Date(kevDateRaw).toLocaleDateString() : '';
     const kevLabel = kevYes
       ? `CISA KEV: Yes${kevAddedPretty ? ` — Added: ${kevAddedPretty}` : ''}`
       : 'CISA KEV: No';
+
     // CNA record
     const cveData = await cveRes.json();
     const cna = cveData?.containers?.cna || {};
@@ -936,6 +961,7 @@ async function runSearch() {
     const published = cveData.cveMetadata?.datePublished
       ? new Date(cveData.cveMetadata.datePublished).toLocaleDateString()
       : 'N/A';
+
     // SSVC block (best effort)
     let ssvcInlineHtml = '';
     try {
@@ -949,6 +975,7 @@ async function runSearch() {
         allMetrics.find(({ metric }) =>
           metric?.other && String(metric.other.type || '').toLowerCase() === 'ssvc'
         );
+
       const ssvcContent = ssvcMetricEntry?.metric?.other?.content;
       const parsed = extractSsvcDeep(ssvcContent);
       const exploitation = capFirst(parsed.exploitation);
@@ -956,6 +983,7 @@ async function runSearch() {
       const technicalImpact = capFirst(parsed.technicalImpact);
       const decision = capFirst(parsed.decision);
       const providerName = ssvcMetricEntry?.provider?.providerMetadata?.shortName || 'ADP';
+
       ssvcInlineHtml = `
         <div class="metrics-box">
           <div class="title">SSVC Metrics (${providerName})</div>
@@ -966,6 +994,7 @@ async function runSearch() {
             ${decision !== 'N/A' ? `<tr><th>Decision</th><td>${decision}</td></tr>` : ''}
           </table>
         </div>`;
+
       if (!ssvcMetricEntry || !ssvcContent) {
         ssvcInlineHtml = `
         <div class="metrics-box">
@@ -980,6 +1009,7 @@ async function runSearch() {
         <table><tr><th>Status</th><td>No SSVC Data is Available at this time.</td></tr></table>
       </div>`;
     }
+
     // EPSS block
     const epssData = epssRes.ok ? (await epssRes.json()).data?.[0] : null;
     const epssDateStr = epssData?.date ? `(as of ${new Date(epssData.date).toLocaleString()})` : '';
@@ -1092,7 +1122,7 @@ async function runSearch() {
       referencesGrouped
     };
 
-    // Paint CVE panel (✅ KEV badge now uses kevLabel)
+    // Paint CVE panel (KEV badge now uses kevLabel)
     const cveContent = document.getElementById("cveContent");
     cveContent.innerHTML = `
       <div class="item"><div class="title">${input} · CNA: ${cnaName}</div></div>
@@ -1124,7 +1154,6 @@ async function runSearch() {
     if (loadingEl) loadingEl.style.display = "none";
   }
 }
-
     // EPSS block
     const epssData = epssRes.ok ? (await epssRes.json()).data?.[0] : null;
     const epssDateStr = epssData?.date ? `(as of ${new Date(epssData.date).toLocaleString()})` : '';
@@ -1328,6 +1357,17 @@ function renderRansomwareSearches(cveId){
   const container = document.getElementById("searchLinks");
   container.insertAdjacentHTML('beforeend', `<div class="item"><div class="title">Ransomware-Focused Searches</div><div class="meta">${rows}</div></div>`);
 }
+
+function isTab2Active() {
+  return document.getElementById('tab2')?.classList.contains('active');
+}
+
+async function maybeRefreshFeeds() {
+  if (isTab2Active()) {
+    await displayFeeds();
+  }
+}
+  
 /* ---------- Dashboard 2 Feeds ---------- */
 const feeds = [
   { name:"SecurityWeek", url:"https://www.securityweek.com/feed/" },
@@ -1581,6 +1621,11 @@ function switchTab(tabIndex) {
   const tabs = [document.getElementById('tab1'), document.getElementById('tab2')];
   document.querySelectorAll('nav button').forEach((btn, i) => { btn.classList.toggle('active', i === tabIndex); });
   tabs.forEach((tab, i) => { tab.classList.toggle('active', i === tabIndex); });
+
+  // ✅ if switching to Tab 2, refresh feeds once
+  if (tabIndex === 1) {
+    maybeRefreshFeeds();
+  }
 }
 /* ---------- Search bindings ---------- */
 function handleSearch() {
@@ -1672,7 +1717,8 @@ document.addEventListener("DOMContentLoaded", () => {
   displayFeeds();
   initInlineAnalysis();
   bindSearchHandlers();
-
+  maybeRefreshFeeds(); // only if Tab 2 is active
+  
   document.getElementById("go").addEventListener("click", handleSearch);
   document.getElementById("cve").addEventListener("keydown", e => {
     if (e.key === "Enter") { e.preventDefault(); handleSearch(); }
@@ -1684,11 +1730,13 @@ document.addEventListener("DOMContentLoaded", () => {
   // ✅ Auto-refresh intervals
   setInterval(loadExploitationWatch, 15 * 60 * 1000); // every 15 minutes
   setInterval(loadVulnCheck, 60 * 60 * 1000);         // every hour
-  setInterval(displayFeeds, 15 * 60 * 1000);
+  setInterval(maybeRefreshFeeds, 10 * 60 * 1000);
+ 
 });
 </script>
 </body>
 </html>
+
 
 
 
