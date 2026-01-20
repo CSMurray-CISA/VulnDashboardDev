@@ -893,6 +893,7 @@ async function runVendorProductSearch(keyword) {
 /* ---------- CVE flow ---------- */
 /* [unchanged: isCVE, runSearch] */
 function isCVE(str){ return /^CVE-\d{4}-\d{4,}$/i.test(str); }
+
 async function runSearch() {
   const inputRaw = (document.getElementById("cve")?.value || "").trim();
   const input = inputRaw.toUpperCase();
@@ -919,29 +920,35 @@ async function runSearch() {
     const kevEntry = await getKevEntry(input).catch(() => null);
     const kevYes = !!kevEntry;
     const ransomwareTag = kevEntry ? (kevEntry.knownRansomwareCampaignUse || 'Unknown') : 'Unknown';
-    // Pull the date the CVE was added to KEV (supports both CISA and cisagov JSON keys)
+    // ✅ KEV date-added (supports both feed key variants)
     const kevDateAdded = kevEntry ? (kevEntry.dateAdded || kevEntry.date_added || '') : '';
     const kevAddedPretty = kevDateAdded ? new Date(kevDateAdded).toLocaleDateString() : '';
+    // ✅ Compose final label: show date only when KEV is true and a date exists
     const kevLabel = kevYes
-    ? `CISA KEV: Yes${kevAddedPretty ? ` — Added: ${kevAddedPretty}` : ''}`
-    : 'CISA KEV: No';
+      ? `CISA KEV: Yes${kevAddedPretty ? ` — Added: ${kevAddedPretty}` : ''}`
+      : 'CISA KEV: No';
     // CNA record
     const cveData = await cveRes.json();
     const cna = cveData?.containers?.cna || {};
     const desc = cna?.descriptions?.[0]?.value || "No description";
     const cnaName = cna?.providerMetadata?.shortName || "Unknown";
     const adpProviders = Array.isArray(cveData?.containers?.adp) ? cveData.containers.adp : [];
-    const published = cveData.cveMetadata?.datePublished ? new Date(cveData.cveMetadata.datePublished).toLocaleDateString() : 'N/A';
+    const published = cveData.cveMetadata?.datePublished
+      ? new Date(cveData.cveMetadata.datePublished).toLocaleDateString()
+      : 'N/A';
     // SSVC block (best effort)
     let ssvcInlineHtml = '';
     try {
-      const allMetrics = (adpProviders || []).flatMap(p => (p.metrics || []).map(m => ({ provider:p, metric:m })));
+      const allMetrics = (adpProviders || [])
+        .flatMap(p => (p.metrics || []).map(m => ({ provider: p, metric: m })));
       const ssvcMetricEntry =
-        allMetrics.find(({provider, metric}) =>
+        allMetrics.find(({ provider, metric }) =>
           (provider?.providerMetadata?.shortName || '').toLowerCase().includes('cisa') &&
           metric?.other && String(metric.other.type || '').toLowerCase() === 'ssvc'
         ) ||
-        allMetrics.find(({metric}) => metric?.other && String(metric.other.type || '').toLowerCase() === 'ssvc');
+        allMetrics.find(({ metric }) =>
+          metric?.other && String(metric.other.type || '').toLowerCase() === 'ssvc'
+        );
       const ssvcContent = ssvcMetricEntry?.metric?.other?.content;
       const parsed = extractSsvcDeep(ssvcContent);
       const exploitation = capFirst(parsed.exploitation);
@@ -973,6 +980,151 @@ async function runSearch() {
         <table><tr><th>Status</th><td>No SSVC Data is Available at this time.</td></tr></table>
       </div>`;
     }
+    // EPSS block
+    const epssData = epssRes.ok ? (await epssRes.json()).data?.[0] : null;
+    const epssDateStr = epssData?.date ? `(as of ${new Date(epssData.date).toLocaleString()})` : '';
+    const epssInlineHtml = epssData ? `
+      <div class="metrics-box">
+        <div class="title">EPSS Metrics</div>
+        <table>
+          <tr><th>EPSS Score</th><td>${Number(epssData.epss).toFixed(4)} ${epssDateStr}</td></tr>
+          <tr><th>30-day Probability</th><td>${(Number(epssData.epss) * 100).toFixed(2)}% ${epssDateStr}</td></tr>
+          <tr><th>Percentile</th><td>${(Number(epssData.percentile) * 100).toFixed(1)}% ${epssDateStr}</td></tr>
+        </table>
+      </div>` : `
+      <div class="metrics-box">
+        <div class="title">EPSS Metrics</div>
+        <table><tr><th>Status</th><td>No EPSS data available</td></tr></table>
+      </div>`;
+
+    // References (by host) from CNA
+    const refs = (cna.references || []).filter(r => r.url && r.url.startsWith('https://'));
+    const grouped = refs.reduce((acc, r) => {
+      let host;
+      try { host = new URL(r.url).hostname.replace(/^www\./, ''); } catch { host = "link"; }
+      (acc[host] ||= []).push(r);
+      return acc;
+    }, {});
+    const refsHtml = Object.keys(grouped).map(host => {
+      const list = grouped[host];
+      return `
+        <div class="item">
+          <div class="title">${host} (${list.length})</div>
+          <div class="meta">${ list.map(r => linkRow(r.url, r.name || r.url)).join("") }</div>
+        </div>`;
+    }).join("") || '<div class="meta">No references found.</div>';
+    document.getElementById("sourcesContent").innerHTML = refsHtml;
+
+    // CVSS metrics (CNA + NVD)
+    const metrics = [];
+    (cna.metrics || []).forEach(m => {
+      if (m.cvssV3_1) metrics.push({
+        score: m.cvssV3_1.baseScore, version: "3.1",
+        source: `CVE.org - CNA (${cnaName})`, vector: m.cvssV3_1.vectorString
+      });
+      if (m.cvssV4_0) metrics.push({
+        score: m.cvssV4_0.baseScore, version: "4.0",
+        source: `CVE.org - CNA (${cnaName})`, vector: m.cvssV4_0.vectorString
+      });
+    });
+
+    let nvdJson = null;
+    if (nvdRes.ok) {
+      nvdJson = await nvdRes.json();
+      const nvdCve = nvdJson.vulnerabilities?.[0]?.cve;
+      if (nvdCve?.metrics) {
+        ["cvssMetricV31","cvssMetricV40"].forEach(key => {
+          (nvdCve.metrics[key] || []).forEach(m => {
+            const data = m.cvssData;
+            if (data) metrics.push({
+              score: data.baseScore,
+              version: key === "cvssMetricV31" ? "3.1" : "4.0",
+              source: "NVD - NIST",
+              vector: data.vectorString
+            });
+          });
+        });
+      }
+    }
+
+    const cvssHtml = metrics.map(m => {
+      const sev = (m.score < 4 ? "Low" : m.score < 7 ? "Medium" : m.score < 9 ? "High" : "Critical");
+      const cls = (m.score < 4 ? "low" : m.score < 7 ? "medium" : m.score < 9 ? "high" : "critical");
+      return `
+        <div class="item">
+          <div class="title">CVSS v${m.version} – ${m.score} <span class="chip ${cls}">${sev}</span></div>
+          <div class="meta">Source: ${m.source}<br>Vector: ${m.vector || "N/A"}</div>
+        </div>`;
+    }).join("") || '<div class="meta">No CVSS metrics available</div>';
+
+    const inVulncheck = __lastVulncheckRecent.includes(input);
+    const quickLinksHtml = [
+      linkRow(`https://nvd.nist.gov/vuln/detail/${input}`, "NVD Detail Page"),
+      linkRow(`https://cve.mitre.org/cgi-bin/cvename.cgi?name=${input}`, "MITRE CVE Record"),
+      linkRow(`https://cveawg.mitre.org/api/cve/${input}`, "CVE Services JSON"),
+      linkRow(`https://web.archive.org/`, "Archive.org (Wayback Machine)")
+    ].join("<br>");
+
+    // Always show relevant searches
+    renderRelevantSearches(input);
+    if (String(ransomwareTag).toLowerCase() === 'known') renderRansomwareSearches(input);
+    const cweHtml = buildCweHtml(cveData, nvdJson);
+
+    // Context for AI Analysis
+    const referencesGrouped = Object.keys(grouped).map(host => ({
+      host,
+      links: grouped[host].map(r => ({ name: r.name || r.url, url: r.url }))
+    }));
+    const cvssForPrompt = metrics.map(m => ({ version: m.version, score: m.score, source: m.source, vector: m.vector }));
+    const cwesForPrompt = (cna?.problemTypes || [])
+      .flatMap(pt => (pt.descriptions || [])
+        .map(d => ({ id: d?.cweId || d?.id || 'Unknown', desc: d?.description || d?.value || '', assigner: cna?.providerMetadata?.shortName || 'CNA' })));
+    __lastAnalysisContext = {
+      input,
+      isCVE: true,
+      cnaName,
+      description: desc,
+      kevYes,
+      ransomwareTag,
+      epss: epssData ? { score: Number(epssData.epss), percentile: Number(epssData.percentile) } : null,
+      cvss: cvssForPrompt,
+      cwes: cwesForPrompt,
+      referencesGrouped
+    };
+
+    // Paint CVE panel (✅ KEV badge now uses kevLabel)
+    const cveContent = document.getElementById("cveContent");
+    cveContent.innerHTML = `
+      <div class="item"><div class="title">${input} · CNA: ${cnaName}</div></div>
+      <div class="item"><div class="title">Published: ${published}</div></div>
+      <div class="item"><div class="title">Description</div><div class="meta">${desc}</div></div>
+      <div class="item">
+        <div class="title">Exploitation Signals</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          <div class="badge ${kevYes ? 'yes' : 'no'}">${kevLabel}</div>
+          ${kevYes
+            ? `<div class="badge ${String(ransomwareTag).toLowerCase()==='known' ? 'yes' : 'no'}">Ransomware: ${ransomwareTag}</div>`
+            : `<div class="badge no">Ransomware: Unknown</div>`}
+          ${inVulncheck ? '<div class="badge yes">VulnCheck Recent</div>' : ''}
+        </div>
+        <div class="metrics-row">
+          <div class="metrics-col">${epssInlineHtml}</div>
+          <div class="metrics-col">${ssvcInlineHtml}</div>
+        </div>
+      </div>
+      <div class="item"><div class="title">CWE Information</div><div class="meta">${cweHtml}</div></div>
+      <div class="item"><div class="title">CVSS Metrics</div><div class="meta">${cvssHtml}</div></div>
+      <div class="item"><div class="title">Quick Links</div><div class="meta">${quickLinksHtml}</div></div>
+    `;
+  } catch (err) {
+    document.getElementById("cveContent").innerHTML =
+      `<div class="meta">Error loading data: ${err.message}</div>`;
+    renderRelevantSearches(inputRaw);
+  } finally {
+    if (loadingEl) loadingEl.style.display = "none";
+  }
+}
+
     // EPSS block
     const epssData = epssRes.ok ? (await epssRes.json()).data?.[0] : null;
     const epssDateStr = epssData?.date ? `(as of ${new Date(epssData.date).toLocaleString()})` : '';
@@ -1537,6 +1689,7 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
+
 
 
 
